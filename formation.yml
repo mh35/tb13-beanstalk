@@ -1,0 +1,349 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Strapi Elastic Beanstalk
+Parameters:
+  Vpc:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID
+  PublicSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnet IDs
+  PrivateSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnet IDs
+  AppTimezone:
+    Type: String
+    Description: Timezone name
+    Default: Asia/Tokyo
+  DBInstanceClass:
+    Type: String
+    Description: DB instance class
+    AllowedValues:
+      - db.t2.micro
+      - db.t2.small
+      - db.t2.medium
+      - db.t2.large
+      - db.t2.xlarge
+      - db.t2.2xlarge
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.t3.large
+      - db.t3.xlarge
+      - db.t3.2xlarge
+      - db.t4g.micro
+      - db.t4g.small
+      - db.t4g.medium
+      - db.t4g.large
+      - db.t4g.xlarge
+      - db.t4g.2xlarge
+      - db.m3.medium
+      - db.m3.large
+      - db.m3.xlarge
+      - db.m3.2xlarge
+      - db.m4.large
+      - db.m4.xlarge
+      - db.m4.2xlarge
+      - db.m4.4xlarge
+      - db.m4.10xlarge
+      - db.m4.16xlarge
+      - db.r3.large
+      - db.r3.xlarge
+      - db.r3.2xlarge
+      - db.r3.4xlarge
+      - db.r3.8xlarge
+      - db.r4.large
+      - db.r4.xlarge
+      - db.r4.2xlarge
+      - db.r4.4xlarge
+      - db.r4.8xlarge
+      - db.r4.16xlarge
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
+      - db.r5.4xlarge
+      - db.r5.8xlarge
+      - db.r5.12xlarge
+      - db.r5.16xlarge
+      - db.r5.24xlarge
+      - db.r5b.large
+      - db.r5b.xlarge
+      - db.r5b.2xlarge
+      - db.r5b.4xlarge
+      - db.r5b.8xlarge
+      - db.r5b.12xlarge
+      - db.r5b.16xlarge
+      - db.r5b.24xlarge
+      - db.r6g.large
+      - db.r6g.xlarge
+      - db.r6g.2xlarge
+      - db.r6g.4xlarge
+      - db.r6g.8xlarge
+      - db.r6g.12xlarge
+      - db.r6g.16xlarge
+      - db.x2g.large
+      - db.x2g.xlarge
+      - db.x2g.2xlarge
+      - db.x2g.4xlarge
+      - db.x2g.8xlarge
+      - db.x2g.12xlarge
+      - db.x2g.16xlarge
+    Default: db.t3.micro
+  DBName:
+    Type: String
+    Description: Database name
+    Default: strapi
+  DBUsername:
+    Type: String
+    Description: Database username
+    Default: strapi
+  DBPassword:
+    Type: String
+    Description: Database password
+    NoEcho: true
+  DBHasMultiAZ:
+    Type: String
+    Description: DB has multi AZ or not
+    AllowedValues:
+      - true
+      - false
+    Default: false
+Conditions:
+  EnablePerformanceInsigits:
+    Fn::Not:
+      -
+        Fn::Or:
+          - !Equals
+            - !Ref DBInstanceClass
+            - db.t2.micro
+          - !Equals
+            - !Ref DBInstanceClass
+            - db.t2.small
+          - !Equals
+            - !Ref DBInstanceClass
+            - db.t3.micro
+          - !Equals
+            - !Ref DBInstanceClass
+            - db.t3.small
+Rules:
+  VpcCondition:
+    Assertions:
+      -
+        Assert:
+          Fn::EachMemberEquals:
+            -
+              Fn::ValueOf:
+                - PublicSubnets
+                - VpcId
+            - !Ref Vpc
+        AssertDescription: All public subnets must in the VPC
+      -
+        Assert:
+          Fn::EachMemberEquals:
+            -
+              Fn::ValueOf:
+                - PrivateSubnets
+                - VpcId
+            - !Ref Vpc
+        AssertDescription: All private subnets must in the VPC
+Resources:
+  ContentBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        -
+          Key: Name
+          Value: !Sub "${AWS::StackName}-ContentBucket"
+        -
+          Key: CostTag
+          Value: !Ref AWS::StackName
+  CloudFrontOriginIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Ref AWS::StackName
+  ContentBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ContentBucket
+      PolicyDocument:
+        Statement:
+          -
+            Action: s3:GetObject
+            Effect: Allow
+            Resource: !Sub "arn:aws:s3:::${ContentBucket}/*"
+            Principal:
+              AWS: !Sub >-
+                arn:aws:iam::cloudfront:user/CloudFront
+                Origin Access Identity ${CloudFrontOriginIdentity}
+          -
+            Action: s3:ListBucket
+            Effect: Allow
+            Resource: !GetAtt ContentBucket.Arn
+            Principal:
+              AWS: !Sub >-
+                arn:aws:iam::cloudfront:user/CloudFront
+                Origin Access Identity ${CloudFrontOriginIdentity}
+  LogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          -
+            Status: Enabled
+            ExpirationInDays: 91
+      Tags:
+        -
+          Key: Name
+          Value: !Sub "${AWS::StackName}-LogBucket"
+        -
+          Key: CostTag
+          Value: !Ref AWS::StackName
+  AlbSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB security group
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        -
+          CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+        -
+          CidrIpv6: '::/0'
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+        -
+          CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+        -
+          CidrIpv6: '::/0'
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+      Tags:
+        -
+          Key: Name
+          Value: !Sub "${AWS::StackName}-AlbSecGroup"
+        -
+          Key: CostTag
+          Value: !Ref AWS::StackName
+  ContainerSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Container security group
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        -
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref AlbSecGroup
+          FromPort: 80
+          ToPort: 80
+      Tags:
+        -
+          Key: Name
+          Value: !Sub "${AWS::StackName}-ContainerSecGroup"
+        -
+          Key: CostTag
+          Value: !Ref AWS::StackName
+  DbSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database security group
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        -
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref ContainerSecGroup
+          FromPort: 3306
+          ToPort: 3306
+      Tags:
+        -
+          Key: Name
+          Value: !Sub "${AWS::StackName}-DbSecGroup"
+        -
+          Key: CostTag
+          Value: !Ref AWS::StackName
+  RdsSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: RDS subnet group
+      SubnetIds: !Ref Subnets
+      Tags:
+        -
+          Key: Name
+          Value: !Sub "${AWS::StackName}-RdsSubnetGroup"
+        -
+          Key: CostTag
+          Value: !Ref AWS::StackName
+  RdsOptionGroup:
+    Type: AWS::RDS::OptionGroup
+    Properties:
+      EngineName: mysql
+      MajorEngineVersion: '8.0'
+      OptionConfigurations:
+        -
+          OptionName: MARIADB_AUDIT_PLUGIN
+          OptionSettings:
+            -
+              Name: SERVER_AUDIT_EVENTS
+              Value: CONNECT,QUERY
+      OptionGroupDescription: RDS option group
+  RdsParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: RDS parameter group
+      Family: mysql8.0
+      Parameters:
+        character_set_server: utf8mb4
+        time_zone: !Ref AppTimezone
+        general_log: 1
+        slow_query_log: 1
+        log_output: FILE
+      Tags:
+        -
+          Key: Name
+          Value: !Sub "${AWS::StackName}-RdsParameterGroup"
+        -
+          Key: CostTag
+          Value: !Ref AWS::StackName
+  RdsMonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - monitoring.rds.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+      Tags:
+        -
+          Key: Name
+          Value: !Sub "${AWS::StackName}-RdsMonitoringRole"
+        -
+          Key: CostTag
+          Value: !Ref AWS::StackName
+  BeanstalkApp:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      Description: Strapi Elastic Beanstalk Application
