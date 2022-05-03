@@ -14,9 +14,83 @@ Parameters:
     Type: String
     Description: Timezone name
     Default: Asia/Tokyo
-  DBInstanceClass:
+  DevDBInstanceClass:
     Type: String
-    Description: DB instance class
+    Description: Develop DB instance class
+    AllowedValues:
+      - db.t2.micro
+      - db.t2.small
+      - db.t2.medium
+      - db.t2.large
+      - db.t2.xlarge
+      - db.t2.2xlarge
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.t3.large
+      - db.t3.xlarge
+      - db.t3.2xlarge
+      - db.t4g.micro
+      - db.t4g.small
+      - db.t4g.medium
+      - db.t4g.large
+      - db.t4g.xlarge
+      - db.t4g.2xlarge
+      - db.m3.medium
+      - db.m3.large
+      - db.m3.xlarge
+      - db.m3.2xlarge
+      - db.m4.large
+      - db.m4.xlarge
+      - db.m4.2xlarge
+      - db.m4.4xlarge
+      - db.m4.10xlarge
+      - db.m4.16xlarge
+      - db.r3.large
+      - db.r3.xlarge
+      - db.r3.2xlarge
+      - db.r3.4xlarge
+      - db.r3.8xlarge
+      - db.r4.large
+      - db.r4.xlarge
+      - db.r4.2xlarge
+      - db.r4.4xlarge
+      - db.r4.8xlarge
+      - db.r4.16xlarge
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
+      - db.r5.4xlarge
+      - db.r5.8xlarge
+      - db.r5.12xlarge
+      - db.r5.16xlarge
+      - db.r5.24xlarge
+      - db.r5b.large
+      - db.r5b.xlarge
+      - db.r5b.2xlarge
+      - db.r5b.4xlarge
+      - db.r5b.8xlarge
+      - db.r5b.12xlarge
+      - db.r5b.16xlarge
+      - db.r5b.24xlarge
+      - db.r6g.large
+      - db.r6g.xlarge
+      - db.r6g.2xlarge
+      - db.r6g.4xlarge
+      - db.r6g.8xlarge
+      - db.r6g.12xlarge
+      - db.r6g.16xlarge
+      - db.x2g.large
+      - db.x2g.xlarge
+      - db.x2g.2xlarge
+      - db.x2g.4xlarge
+      - db.x2g.8xlarge
+      - db.x2g.12xlarge
+      - db.x2g.16xlarge
+    Default: db.t3.micro
+  ProdDBInstanceClass:
+    Type: String
+    Description: Production DB instance class
     AllowedValues:
       - db.t2.micro
       - db.t2.small
@@ -107,22 +181,55 @@ Parameters:
       - true
       - false
     Default: false
+  SSHKeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair name
+  DevMaxInstanceNum:
+    Type: Number
+    Description: Max instance number of instance in development
+    MinValue: '1'
+    Default: '2'
+  ProdMaxInstanceNum:
+    Type: Number
+    Description: Max instance number of instance in production
+    MinValue: '1'
+    Default: '6'
+  DevInstanceTypes:
+    Type: CommaDelimitedList
+    Description: EC2 instance types for development
+    Default: t3.small
 Conditions:
-  EnablePerformanceInsigits:
+  EnablePerformanceInsigitsDev:
     Fn::Not:
       -
         Fn::Or:
           - !Equals
-            - !Ref DBInstanceClass
+            - !Ref DevDBInstanceClass
             - db.t2.micro
           - !Equals
-            - !Ref DBInstanceClass
+            - !Ref DevDBInstanceClass
             - db.t2.small
           - !Equals
-            - !Ref DBInstanceClass
+            - !Ref DevDBInstanceClass
             - db.t3.micro
           - !Equals
-            - !Ref DBInstanceClass
+            - !Ref DevDBInstanceClass
+            - db.t3.small
+  EnablePerformanceInsightsProd:
+    Fn::Not:
+      -
+        Fn::Or:
+          - !Equals
+            - !Ref ProdDBInstanceClass
+            - db.t2.micro
+          - !Equals
+            - !Ref ProdDBInstanceClass
+            - db.t2.small
+          - !Equals
+            - !Ref ProdDBInstanceClass
+            - db.t3.micro
+          - !Equals
+            - !Ref ProdDBInstanceClass
             - db.t3.small
 Rules:
   VpcCondition:
@@ -189,6 +296,26 @@ Resources:
               AWS: !Sub >-
                 arn:aws:iam::cloudfront:user/CloudFront
                 Origin Access Identity ${CloudFrontOriginIdentity}
+  ContentBucketAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Access to Elastic Beanstalk Strapi bucket policy
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt ContentBucket.Arn
+          -
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:PutObjectAcl
+            Resource: !Sub "arn:aws:s3:::${ContentBucket}/*"
   LogBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -243,10 +370,10 @@ Resources:
         -
           Key: CostTag
           Value: !Ref AWS::StackName
-  ContainerSecGroup:
+  InstanceSecGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Container security group
+      GroupDescription: Instance security group
       VpcId: !Ref Vpc
       SecurityGroupIngress:
         -
@@ -254,10 +381,20 @@ Resources:
           SourceSecurityGroupId: !Ref AlbSecGroup
           FromPort: 80
           ToPort: 80
+        -
+          IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: 22
+          ToPort: 22
+        -
+          IpProtocol: tcp
+          CidrIpv6: '::/0'
+          FromPort: 22
+          ToPort: 22
       Tags:
         -
           Key: Name
-          Value: !Sub "${AWS::StackName}-ContainerSecGroup"
+          Value: !Sub "${AWS::StackName}-InstanceSecGroup"
         -
           Key: CostTag
           Value: !Ref AWS::StackName
@@ -269,7 +406,7 @@ Resources:
       SecurityGroupIngress:
         -
           IpProtocol: tcp
-          SourceSecurityGroupId: !Ref ContainerSecGroup
+          SourceSecurityGroupId: !Ref InstanceSecGroup
           FromPort: 3306
           ToPort: 3306
       Tags:
@@ -343,7 +480,132 @@ Resources:
         -
           Key: CostTag
           Value: !Ref AWS::StackName
+  BeanstalkInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref ContentBucketAccessPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/EC2InstanceConnect
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Tags:
+        -
+          Key: Name
+          Value: !Sub "${AWS::StackName}-BeanstalkInstanceRole"
+        -
+          Key: CostTag
+          Value: !Ref AWS::StackName
+  BeanstalkInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref BeanstalkInstanceRole
   BeanstalkApp:
     Type: AWS::ElasticBeanstalk::Application
     Properties:
       Description: Strapi Elastic Beanstalk Application
+  DevelopEnvTemplate:
+    Type: AWS::ElasticBeanstalk::ConfigurationTemplate
+    Properties:
+      ApplicationName: !Ref BeanstalkApp
+      SolutionStackName: '64bit Amazon Linux 2 v5.5.2 running Node.js 16'
+      Description: Develop environment for Strapi application
+      OptionSettings:
+        -
+          Namespace: aws:autoscaling:asg
+          OptionName: MinSize
+          Value: '1'
+        -
+          Namespace: aws:autoscaling:asg
+          OptionName: MaxSize
+          Value: !Ref DevMaxInstanceNum
+        -
+          Namespace: aws:autoscaling:launchconfiguration
+          OptionName: IamInstanceProfile
+          Value: !Ref BeanstalkInstanceProfile
+        -
+          Namespace: aws:autoscaling:launchconfiguration
+          OptionName: EC2KeyName
+          Value: !Ref SSHKeyPairName
+        -
+          Namespace: aws:autoscaling:launchconfiguration
+          OptionName: SecurityGroups
+          Value: !Ref InstanceSecGroup
+        -
+          Namespace: aws:autoscaling:launchconfiguration
+          OptionName: RootVolumeType
+          Value: gp2
+        -
+          Namespace: aws:autoscaling:launchconfiguration
+          OptionName: RootVolumeSize
+          Value: '20'
+        -
+          Namespace: aws:ec2:instances
+          OptionName: InstanceTypes
+          Value: !Join
+            - ','
+            - !Ref DevInstanceTypes
+        -
+          Namespace: aws:ec2:vpc
+          OptionName: VPCId
+          Value: !Ref Vpc
+        -
+          Namespace: aws:ec2:vpc
+          OptionName: Subnets
+          Value: !Join
+            - ','
+            - !Ref PublicSubnets
+        -
+          Namespace: aws:ec2:vpc
+          OptionName: ELBSubnets
+          Value: !Join
+            - ','
+            - !Ref PublicSubnets
+        -
+          Namespace: aws:ec2:vpc
+          OptionName: ELBScheme
+          Value: public
+        -
+          Namespace: aws:ec2:vpc
+          OptionName: DBSubnets
+          Value: !Join
+            - ','
+            - !Ref PrivateSubnets
+        -
+          Namespace: aws:ec2:vpc
+          OptionName: AssociatePublicIpAddress
+          Value: 'true'
+        -
+          Namespace: aws:elasticbeanstalk:application
+          OptionName: Application Healthcheck URL
+          Value: /
+        -
+          Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: StreamLogs
+          Value: 'true'
+        -
+          Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: DeleteOnTerminate
+          Value: 'true'
+        -
+          Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: RetentionInDays
+          Value: '7'
+        -
+          Namespace: aws:elasticbeanstalk:environment
+          OptionName: EnvironmentType
+          Value: LoadBalanced
+        -
+          Namespace: aws:elasticbeanstalk:environment
+          OptionName: LoadBalancerType
+          Value: application
